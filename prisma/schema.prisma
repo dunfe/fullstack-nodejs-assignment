@@ -54,7 +54,6 @@ model ScheduleTask {
   attemptCount Int @default(0)
   timeoutMs Int @default(30000)
 
-  retryCount        Int        @default(0)
   retryDelaySeconds Int        @default(30)
 
   lastRunAt DateTime?

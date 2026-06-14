@@ -15,7 +15,9 @@ export class SchedulesRepository {
       where: { id },
       include: {
         runs: {
-          orderBy: { createdAt: 'desc' },
+          orderBy: {
+            attemptNumber: 'asc',
+          },
         },
       },
     });
