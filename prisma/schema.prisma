@@ -1,0 +1,87 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum TaskType {
+  FILE_READ
+  FILE_IMPORT
+  FORM_FILL
+  EMAIL
+}
+
+enum TaskStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  RETRYING
+  CANCELED
+  PAUSED
+}
+
+enum ScheduleKind {
+  ONCE
+  CRON
+}
+
+model ScheduleTask {
+  id String @id @default(uuid())
+  type TaskType
+  status TaskStatus @default(PENDING)
+  scheduleKind ScheduleKind
+
+  payload Json
+  result Json?
+
+  scheduleAt DateTime?
+  cronExpr String?
+  nextRunAt DateTime?
+
+  idempotencyKey String? @unique
+
+  maxRetries Int @default(3)
+  attemptCount Int @default(0)
+  timeoutMs Int @default(30000)
+
+  lastRunAt DateTime?
+  lastError String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  runs TaskRun[]
+
+  @@index([status, nextRunAt])
+  @@index([type])
+}
+
+model TaskRun {
+  id String @id @default(uuid())
+  taskId String
+  task ScheduleTask @relation(fields: [taskId], references: [id])
+
+  status TaskStatus
+  correlationId String
+
+  scheduleFor DateTime?
+  startedAt DateTime?
+  finishedAt DateTime?
+
+  attemptNumber Int
+  result Json?
+  errorMessage String?
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+  @@index([correlationId])
+}
