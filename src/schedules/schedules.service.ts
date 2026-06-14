@@ -9,13 +9,21 @@ import { PushScheduleDto } from './dto/push-schedule.dto';
 import { SchedulesRepository } from './schedules.repository';
 import { Prisma } from 'generated/prisma/client';
 import { ScheduleKind, TaskStatus } from 'generated/prisma/enums';
+import { TaskPayloadValidator } from './validators/task-payload.validator';
+import { randomUUID } from 'crypto';
+import { TaskExecutorRegistry } from './executors/task-executor.registry';
 
 @Injectable()
 export class SchedulesService {
-  constructor(private readonly schedulesRepository: SchedulesRepository) {}
+  constructor(
+    private readonly schedulesRepository: SchedulesRepository,
+    private readonly taskPayloadValidator: TaskPayloadValidator,
+    private readonly taskExecutorRegistry: TaskExecutorRegistry,
+  ) {}
 
   async create(dto: CreateScheduleDto) {
     this.validateScheduleInput(dto);
+    this.taskPayloadValidator.validate(dto.type, dto.payload);
 
     if (dto.idempotencyKey) {
       const existing = await this.schedulesRepository.findByIdempotencyKey(
@@ -156,5 +164,65 @@ export class SchedulesService {
       'code' in error &&
       error.code === 'P2002'
     );
+  }
+
+  async processDueTask(taskId: string) {
+    const now = new Date();
+
+    const claimResult = await this.schedulesRepository.claimDueTask(
+      taskId,
+      now,
+    );
+
+    if (claimResult.count === 0) {
+      return {
+        skipped: true,
+        reason: 'Task was already claimed, canceled, or not due yet.',
+      };
+    }
+
+    const task = await this.schedulesRepository.findById(taskId);
+
+    if (!task) {
+      return {
+        skipped: true,
+        reason: 'Task disappeared after claim.',
+      };
+    }
+
+    const correlationId = randomUUID();
+
+    const run = await this.schedulesRepository.createRunLog({
+      taskId: task.id,
+      status: TaskStatus.RUNNING,
+      correlationId,
+      scheduledFor: task.nextRunAt,
+      startedAt: now,
+      attemptNumber: task.attemptCount,
+    });
+
+    const executor = this.taskExecutorRegistry.getExecutor(task.type);
+
+    const executionResult = await executor.execute(task.payload);
+
+    const result: Prisma.InputJsonObject = {
+      taskType: task.type,
+      executedAt: new Date().toISOString(),
+      correlationId,
+      output: executionResult,
+    };
+
+    const finishedAt = new Date();
+
+    await this.schedulesRepository.markRunSuccess(run.id, finishedAt, result);
+
+    await this.schedulesRepository.markTaskSuccess(task.id, result);
+
+    return {
+      skipped: false,
+      taskId: task.id,
+      runId: run.id,
+      correlationId,
+    };
   }
 }

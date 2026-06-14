@@ -46,4 +46,72 @@ export class SchedulesRepository {
       },
     });
   }
+
+  findDueTasks(now: Date, limit = 10) {
+    return this.prisma.scheduleTask.findMany({
+      where: {
+        status: {
+          in: [TaskStatus.PENDING, TaskStatus.RETRYING],
+        },
+        nextRunAt: {
+          lte: now,
+        },
+      },
+      orderBy: {
+        nextRunAt: 'asc',
+      },
+      take: limit,
+    });
+  }
+
+  claimDueTask(id: string, now: Date) {
+    return this.prisma.scheduleTask.updateMany({
+      where: {
+        id,
+        status: {
+          in: [TaskStatus.PENDING, TaskStatus.RETRYING],
+        },
+        nextRunAt: {
+          lte: now,
+        },
+      },
+      data: {
+        status: TaskStatus.RUNNING,
+        lastRunAt: now,
+        attemptCount: {
+          increment: 1,
+        },
+      },
+    });
+  }
+
+  createRunLog(data: Prisma.TaskRunUncheckedCreateInput) {
+    return this.prisma.taskRun.create({ data });
+  }
+
+  markRunSuccess(
+    runId: string,
+    finishedAt: Date,
+    result: Prisma.InputJsonValue,
+  ) {
+    return this.prisma.taskRun.update({
+      where: { id: runId },
+      data: {
+        status: TaskStatus.SUCCESS,
+        finishedAt,
+        result,
+      },
+    });
+  }
+
+  markTaskSuccess(taskId: string, result: Prisma.InputJsonValue) {
+    return this.prisma.scheduleTask.update({
+      where: { id: taskId },
+      data: {
+        status: TaskStatus.SUCCESS,
+        result,
+        lastError: null,
+      },
+    });
+  }
 }

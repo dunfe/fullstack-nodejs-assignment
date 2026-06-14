@@ -10,7 +10,7 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
-import { TaskType } from '../enums/task-type.enum';
+import { TaskType } from 'generated/prisma/enums';
 
 type ScheduleTimingFields = {
   scheduleAt?: string;

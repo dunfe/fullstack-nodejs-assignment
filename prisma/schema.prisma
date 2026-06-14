@@ -74,7 +74,7 @@ model TaskRun {
   status TaskStatus
   correlationId String
 
-  scheduleFor DateTime?
+  scheduledFor DateTime?
   startedAt DateTime?
   finishedAt DateTime?
 
