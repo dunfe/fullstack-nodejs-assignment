@@ -48,4 +48,9 @@ export class PushScheduleDto {
   @Min(1000)
   @Max(300000)
   timeoutMs?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  retryDelaySeconds?: number;
 }

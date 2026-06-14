@@ -50,6 +50,8 @@ export class SchedulesService {
         idempotencyKey: dto.idempotencyKey ?? null,
         maxRetries: dto.maxRetries ?? 3,
         timeoutMs: dto.timeoutMs ?? 30000,
+        retryDelaySeconds: dto.retryDelaySeconds ?? 30,
+        retryCount: 0,
       });
     } catch (error) {
       if (this.isUniqueConstraintError(error)) {
@@ -201,28 +203,99 @@ export class SchedulesService {
       attemptNumber: task.attemptCount,
     });
 
-    const executor = this.taskExecutorRegistry.getExecutor(task.type);
+    try {
+      const executor = this.taskExecutorRegistry.getExecutor(task.type);
 
-    const executionResult = await executor.execute(task.payload);
+      const executionResult = await executor.execute(task.payload);
 
-    const result: Prisma.InputJsonObject = {
-      taskType: task.type,
-      executedAt: new Date().toISOString(),
-      correlationId,
-      output: executionResult,
-    };
+      const result = this.toPrismaJsonObject({
+        taskType: task.type,
+        executedAt: new Date().toISOString(),
+        correlationId,
+        output: executionResult,
+      });
 
-    const finishedAt = new Date();
+      const finishedAt = new Date();
 
-    await this.schedulesRepository.markRunSuccess(run.id, finishedAt, result);
+      await this.schedulesRepository.markRunSuccess(run.id, finishedAt, result);
 
-    await this.schedulesRepository.markTaskSuccess(task.id, result);
+      await this.schedulesRepository.markTaskSuccess(task.id, result);
 
-    return {
-      skipped: false,
-      taskId: task.id,
-      runId: run.id,
-      correlationId,
-    };
+      return {
+        skipped: false,
+        taskId: task.id,
+        runId: run.id,
+        correlationId,
+        status: TaskStatus.SUCCESS,
+      };
+    } catch (error: unknown) {
+      const finishedAt = new Date();
+      const errorMessage = this.getErrorMessage(error);
+
+      const errorResult = this.toPrismaJsonObject({
+        taskType: task.type,
+        executedAt: finishedAt.toISOString(),
+        correlationId,
+        error: errorMessage,
+      });
+
+      await this.schedulesRepository.markRunFailed(
+        run.id,
+        finishedAt,
+        errorMessage,
+        errorResult,
+      );
+
+      const shouldRetry = task.attemptCount <= task.maxRetries;
+
+      if (shouldRetry) {
+        const nextRunAt = this.getNextRetryAt(task.retryDelaySeconds);
+
+        await this.schedulesRepository.markTaskRetrying(
+          task.id,
+          nextRunAt,
+          errorMessage,
+        );
+
+        return {
+          skipped: false,
+          taskId: task.id,
+          runId: run.id,
+          correlationId,
+          status: TaskStatus.RETRYING,
+          nextRunAt,
+          error: errorMessage,
+        };
+      }
+
+      await this.schedulesRepository.markTaskFailed(task.id, errorMessage);
+
+      return {
+        skipped: false,
+        taskId: task.id,
+        runId: run.id,
+        correlationId,
+        status: TaskStatus.FAILED,
+        error: errorMessage,
+      };
+    }
+  }
+
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    return String(error);
+  }
+
+  private getNextRetryAt(retryDelaySeconds: number): Date {
+    return new Date(Date.now() + retryDelaySeconds * 1000);
+  }
+
+  private toPrismaJsonObject(
+    value: Record<string, unknown>,
+  ): Prisma.InputJsonObject {
+    return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonObject;
   }
 }

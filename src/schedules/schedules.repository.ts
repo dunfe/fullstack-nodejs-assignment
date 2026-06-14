@@ -50,12 +50,20 @@ export class SchedulesRepository {
   findDueTasks(now: Date, limit = 10) {
     return this.prisma.scheduleTask.findMany({
       where: {
-        status: {
-          in: [TaskStatus.PENDING, TaskStatus.RETRYING],
-        },
-        nextRunAt: {
-          lte: now,
-        },
+        OR: [
+          {
+            status: TaskStatus.PENDING,
+            scheduleAt: {
+              lte: now,
+            },
+          },
+          {
+            status: TaskStatus.RETRYING,
+            nextRunAt: {
+              lte: now,
+            },
+          },
+        ],
       },
       orderBy: {
         nextRunAt: 'asc',
@@ -111,6 +119,49 @@ export class SchedulesRepository {
         status: TaskStatus.SUCCESS,
         result,
         lastError: null,
+      },
+    });
+  }
+
+  async markRunFailed(
+    runId: string,
+    finishedAt: Date,
+    errorMessage: string,
+    result: Prisma.InputJsonObject,
+  ) {
+    return this.prisma.taskRun.update({
+      where: { id: runId },
+      data: {
+        status: TaskStatus.FAILED,
+        finishedAt,
+        errorMessage,
+        result,
+      },
+    });
+  }
+
+  async markTaskRetrying(
+    taskId: string,
+    nextRunAt: Date,
+    errorMessage: string,
+  ) {
+    return this.prisma.scheduleTask.update({
+      where: { id: taskId },
+      data: {
+        status: TaskStatus.RETRYING,
+        nextRunAt,
+        lastError: errorMessage,
+      },
+    });
+  }
+
+  async markTaskFailed(taskId: string, errorMessage: string) {
+    return this.prisma.scheduleTask.update({
+      where: { id: taskId },
+      data: {
+        status: TaskStatus.FAILED,
+        nextRunAt: null,
+        lastError: errorMessage,
       },
     });
   }
