@@ -1,0 +1,10 @@
+node_modules
+dist
+generated
+.env
+tmp
+coverage
+frontend
+.git
+.github
+*.log

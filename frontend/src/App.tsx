@@ -130,7 +130,7 @@ function App() {
     if (!autoRefresh) return;
     const interval = setInterval(() => {
       loadTasks(false);
-    }, 1000);
+    }, 5000);
     return () => clearInterval(interval);
   }, [autoRefresh, loadTasks]);
 
@@ -160,7 +160,7 @@ function App() {
       } catch (err) {
         console.error('Failed to auto-refresh task detail:', err);
       }
-    }, 1000);
+    }, 5000);
     return () => clearInterval(interval);
   }, [isDetailOpen, selectedTask?.id]);
 

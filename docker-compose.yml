@@ -10,12 +10,59 @@ services:
       POSTGRES_DB: schedule_task_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U schedule_user -d schedule_task_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7
     container_name: schedule_task_redis
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: schedule_task_backend
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - DATABASE_URL=postgresql://schedule_user:schedule_password@postgres:5432/schedule_task_db?schema=public
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TASK_MAX_RETRIES=3
+      - TASK_TIMEOUT_MS=30000
+      - MAIL_HOST=smtp.example.com
+      - MAIL_PORT=587
+      - MAIL_USER=user@example.com
+      - MAIL_PASS=password
+      - MAIL_FROM=no-reply@example.com
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_BASE_URL=http://localhost:3000/api
+    container_name: schedule_task_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
 
 volumes:
   postgres_data:
