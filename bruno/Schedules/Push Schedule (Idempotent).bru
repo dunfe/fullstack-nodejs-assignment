@@ -1,0 +1,25 @@
+meta {
+  name: Push Schedule (Idempotent)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/schedules/push
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "type": "FILE_READ",
+    "payload": {
+      "path": "package.json"
+    },
+    "idempotencyKey": "unique-push-key-example-1",
+    "scheduleAt": "2026-06-16T20:00:00.000Z",
+    "maxRetries": 3,
+    "timeoutMs": 30000,
+    "retryDelaySeconds": 10
+  }
+}

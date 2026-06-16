@@ -1,0 +1,24 @@
+meta {
+  name: Create Failing Schedule (For Failure & Retry Testing)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/schedules
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "type": "FILE_READ",
+    "payload": {
+      "path": "non-existent-file-path-to-trigger-failure.txt"
+    },
+    "scheduleAt": "2026-06-16T16:00:00.000Z",
+    "maxRetries": 2,
+    "timeoutMs": 15000,
+    "retryDelaySeconds": 5
+  }
+}

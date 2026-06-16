@@ -9,6 +9,8 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api');
 
+  app.enableCors();
+
   app.useGlobalInterceptors(new CorrelationIdInterceptor());
   app.useGlobalFilters(new GlobalExceptionFilter());
 

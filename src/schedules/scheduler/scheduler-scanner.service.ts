@@ -20,6 +20,13 @@ export class SchedulerScannerService {
 
     this.logger.log(`[scheduler] tick at ${now.toISOString()}`);
 
+    try {
+      await this.schedulesService.recoverStuckTasks();
+    } catch (error) {
+      const message = error instanceof Error ? error.stack : String(error);
+      this.logger.error(`[scheduler] failed to recover stuck tasks`, message);
+    }
+
     const dueTasks = await this.schedulesRepository.findDueTasks(now, 10);
 
     this.logger.log(`[scheduler] found ${dueTasks.length} due task(s)`);

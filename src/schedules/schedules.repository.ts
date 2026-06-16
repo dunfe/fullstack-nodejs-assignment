@@ -55,9 +55,18 @@ export class SchedulesRepository {
         OR: [
           {
             status: TaskStatus.PENDING,
-            scheduleAt: {
-              lte: now,
-            },
+            OR: [
+              {
+                scheduleAt: {
+                  lte: now,
+                },
+              },
+              {
+                nextRunAt: {
+                  lte: now,
+                },
+              },
+            ],
           },
           {
             status: TaskStatus.RETRYING,
@@ -81,9 +90,18 @@ export class SchedulesRepository {
         status: {
           in: [TaskStatus.PENDING, TaskStatus.RETRYING],
         },
-        nextRunAt: {
-          lte: now,
-        },
+        OR: [
+          {
+            nextRunAt: {
+              lte: now,
+            },
+          },
+          {
+            scheduleAt: {
+              lte: now,
+            },
+          },
+        ],
       },
       data: {
         status: TaskStatus.RUNNING,
@@ -121,6 +139,24 @@ export class SchedulesRepository {
         status: TaskStatus.SUCCESS,
         result,
         lastError: null,
+      },
+    });
+  }
+
+  rescheduleCronTask(
+    taskId: string,
+    nextRunAt: Date,
+    result?: Prisma.InputJsonValue,
+    errorMessage?: string,
+  ) {
+    return this.prisma.scheduleTask.update({
+      where: { id: taskId },
+      data: {
+        status: TaskStatus.PENDING,
+        nextRunAt,
+        attemptCount: 0,
+        result: result !== undefined ? result : undefined,
+        lastError: errorMessage !== undefined ? errorMessage : null,
       },
     });
   }
@@ -165,6 +201,27 @@ export class SchedulesRepository {
         nextRunAt: null,
         lastError: errorMessage,
       },
+    });
+  }
+
+  async findStuckTasks(now: Date) {
+    const runningTasks = await this.prisma.scheduleTask.findMany({
+      where: {
+        status: TaskStatus.RUNNING,
+      },
+      include: {
+        runs: {
+          orderBy: {
+            attemptNumber: 'desc',
+          },
+        },
+      },
+    });
+
+    return runningTasks.filter((task) => {
+      if (!task.lastRunAt) return false;
+      const runningLimit = task.lastRunAt.getTime() + task.timeoutMs;
+      return runningLimit <= now.getTime();
     });
   }
 }

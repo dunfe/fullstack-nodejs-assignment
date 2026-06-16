@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
@@ -12,9 +13,12 @@ import { ScheduleKind, TaskStatus } from 'generated/prisma/enums';
 import { TaskPayloadValidator } from './validators/task-payload.validator';
 import { randomUUID } from 'crypto';
 import { TaskExecutorRegistry } from './executors/task-executor.registry';
+import { CronTime } from 'cron';
 
 @Injectable()
 export class SchedulesService {
+  private readonly logger = new Logger(SchedulesService.name);
+
   constructor(
     private readonly schedulesRepository: SchedulesRepository,
     private readonly taskPayloadValidator: TaskPayloadValidator,
@@ -36,7 +40,20 @@ export class SchedulesService {
     }
 
     const scheduleKind = dto.scheduleAt ? ScheduleKind.ONCE : ScheduleKind.CRON;
-    const nextRunAt = dto.scheduleAt ? new Date(dto.scheduleAt) : null;
+    let nextRunAt: Date | null = null;
+    if (dto.scheduleAt) {
+      nextRunAt = new Date(dto.scheduleAt);
+    } else if (dto.cronExpr) {
+      try {
+        const cronTime = new CronTime(dto.cronExpr);
+        nextRunAt = cronTime.sendAt().toJSDate();
+      } catch (error) {
+        throw new BadRequestException({
+          code: 'INVALID_CRON_EXPRESSION',
+          message: `Invalid cron expression: ${this.getErrorMessage(error)}`,
+        });
+      }
+    }
 
     try {
       return await this.schedulesRepository.create({
@@ -51,7 +68,6 @@ export class SchedulesService {
         maxRetries: dto.maxRetries ?? 3,
         timeoutMs: dto.timeoutMs ?? 30000,
         retryDelaySeconds: dto.retryDelaySeconds ?? 30,
-        retryCount: 0,
       });
     } catch (error) {
       if (this.isUniqueConstraintError(error)) {
@@ -157,6 +173,17 @@ export class SchedulesService {
         });
       }
     }
+
+    if (dto.cronExpr) {
+      try {
+        new CronTime(dto.cronExpr);
+      } catch (error) {
+        throw new BadRequestException({
+          code: 'INVALID_CRON_EXPRESSION',
+          message: `cronExpr must be a valid cron expression. Error: ${this.getErrorMessage(error)}`,
+        });
+      }
+    }
   }
 
   private isUniqueConstraintError(error: unknown) {
@@ -200,13 +227,34 @@ export class SchedulesService {
       correlationId,
       scheduledFor: task.nextRunAt,
       startedAt: now,
-      attemptNumber: task.attemptCount,
+      attemptNumber: (task.runs?.length ?? 0) + 1,
     });
 
     try {
       const executor = this.taskExecutorRegistry.getExecutor(task.type);
 
-      const executionResult = await executor.execute(task.payload);
+      let timeoutId: NodeJS.Timeout | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(
+            new Error(`Task execution timed out after ${task.timeoutMs}ms`),
+          );
+        }, task.timeoutMs);
+      });
+
+      // Introduce a small delay to make the RUNNING status visible to clients / UI in production/dev
+      if (process.env.NODE_ENV !== 'test') {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+
+      const executionResult = await Promise.race([
+        executor.execute(task.payload),
+        timeoutPromise,
+      ]).finally(() => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      });
 
       const result = this.toPrismaJsonObject({
         taskType: task.type,
@@ -218,6 +266,25 @@ export class SchedulesService {
       const finishedAt = new Date();
 
       await this.schedulesRepository.markRunSuccess(run.id, finishedAt, result);
+
+      if (task.scheduleKind === ScheduleKind.CRON && task.cronExpr) {
+        const cronTime = new CronTime(task.cronExpr);
+        const nextRunAt = cronTime.sendAt().toJSDate();
+        await this.schedulesRepository.rescheduleCronTask(
+          task.id,
+          nextRunAt,
+          result,
+        );
+
+        return {
+          skipped: false,
+          taskId: task.id,
+          runId: run.id,
+          correlationId,
+          status: TaskStatus.PENDING,
+          nextRunAt,
+        };
+      }
 
       await this.schedulesRepository.markTaskSuccess(task.id, result);
 
@@ -268,6 +335,27 @@ export class SchedulesService {
         };
       }
 
+      if (task.scheduleKind === ScheduleKind.CRON && task.cronExpr) {
+        const cronTime = new CronTime(task.cronExpr);
+        const nextRunAt = cronTime.sendAt().toJSDate();
+        await this.schedulesRepository.rescheduleCronTask(
+          task.id,
+          nextRunAt,
+          undefined,
+          errorMessage,
+        );
+
+        return {
+          skipped: false,
+          taskId: task.id,
+          runId: run.id,
+          correlationId,
+          status: TaskStatus.PENDING,
+          nextRunAt,
+          error: errorMessage,
+        };
+      }
+
       await this.schedulesRepository.markTaskFailed(task.id, errorMessage);
 
       return {
@@ -287,6 +375,91 @@ export class SchedulesService {
     }
 
     return String(error);
+  }
+
+  async recoverStuckTasks(): Promise<void> {
+    const now = new Date();
+    const stuckTasks = await this.schedulesRepository.findStuckTasks(now);
+
+    if (stuckTasks.length > 0) {
+      this.logger.log(
+        `[recovery] Found ${stuckTasks.length} stuck task(s) to recover`,
+      );
+    }
+
+    for (const task of stuckTasks) {
+      try {
+        this.logger.warn(
+          `[recovery] Recovering stuck task ${task.id} (lastRunAt: ${task.lastRunAt?.toISOString()})`,
+        );
+
+        const errorMessage =
+          'Task execution timed out (unresponsive runner or system crash recovery).';
+        const finishedAt = new Date();
+
+        // Find the active running run log for this task
+        const runningRun = task.runs.find(
+          (r) => r.status === TaskStatus.RUNNING,
+        );
+        const correlationId = runningRun?.correlationId ?? randomUUID();
+
+        const errorResult = this.toPrismaJsonObject({
+          taskType: task.type,
+          executedAt: finishedAt.toISOString(),
+          correlationId,
+          error: errorMessage,
+        });
+
+        if (runningRun) {
+          await this.schedulesRepository.markRunFailed(
+            runningRun.id,
+            finishedAt,
+            errorMessage,
+            errorResult,
+          );
+        }
+
+        const shouldRetry = task.attemptCount <= task.maxRetries;
+
+        if (shouldRetry) {
+          const nextRunAt = this.getNextRetryAt(task.retryDelaySeconds);
+
+          await this.schedulesRepository.markTaskRetrying(
+            task.id,
+            nextRunAt,
+            errorMessage,
+          );
+
+          this.logger.log(
+            `[recovery] Rescheduled stuck task ${task.id} for retry at ${nextRunAt.toISOString()}`,
+          );
+        } else if (task.scheduleKind === ScheduleKind.CRON && task.cronExpr) {
+          const cronTime = new CronTime(task.cronExpr);
+          const nextRunAt = cronTime.sendAt().toJSDate();
+          await this.schedulesRepository.rescheduleCronTask(
+            task.id,
+            nextRunAt,
+            undefined,
+            errorMessage,
+          );
+
+          this.logger.log(
+            `[recovery] Stuck CRON task ${task.id} exceeded max retries, rescheduled for next cron tick at ${nextRunAt.toISOString()}`,
+          );
+        } else {
+          await this.schedulesRepository.markTaskFailed(task.id, errorMessage);
+          this.logger.error(
+            `[recovery] Stuck task ${task.id} exceeded max retries and was marked failed`,
+          );
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.stack : String(error);
+        this.logger.error(
+          `[recovery] Failed to recover stuck task ${task.id}`,
+          message,
+        );
+      }
+    }
   }
 
   private getNextRetryAt(retryDelaySeconds: number): Date {

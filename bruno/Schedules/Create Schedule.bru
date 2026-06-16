@@ -1,0 +1,24 @@
+meta {
+  name: Create Schedule
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/schedules
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "type": "FILE_READ",
+    "payload": {
+      "path": "package.json"
+    },
+    "scheduleAt": "2026-06-16T20:00:00.000Z",
+    "maxRetries": 3,
+    "timeoutMs": 30000,
+    "retryDelaySeconds": 10
+  }
+}
