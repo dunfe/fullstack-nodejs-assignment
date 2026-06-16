@@ -8,6 +8,7 @@ import { TaskExecutorRegistry } from './executors/task-executor.registry';
 import { FileReadExecutor } from './executors/file-read.executor';
 import { FileImportExecutor } from './executors/file-import.executor';
 import { FormFillExecutor } from './executors/form-fill.executor';
+import { EmailExecutor } from './executors/email.executor';
 
 @Module({
   controllers: [SchedulesController],
@@ -19,6 +20,7 @@ import { FormFillExecutor } from './executors/form-fill.executor';
     FileReadExecutor,
     FileImportExecutor,
     FormFillExecutor,
+    EmailExecutor,
     TaskExecutorRegistry,
   ],
 })
