@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { TaskType } from 'generated/prisma/client';
 import { FileReadExecutor } from './file-read.executor';
 import { FileImportExecutor } from './file-import.executor';
+import { FormFillExecutor } from './form-fill.executor';
 import { TaskExecutor } from './task-executor.interface';
 
 @Injectable()
@@ -11,9 +12,11 @@ export class TaskExecutorRegistry {
   constructor(
     fileReadExecutor: FileReadExecutor,
     fileImportExecutor: FileImportExecutor,
+    formFillExecutor: FormFillExecutor,
   ) {
     this.executors.set(fileReadExecutor.type, fileReadExecutor);
     this.executors.set(fileImportExecutor.type, fileImportExecutor);
+    this.executors.set(formFillExecutor.type, formFillExecutor);
   }
 
   getExecutor(type: TaskType): TaskExecutor {

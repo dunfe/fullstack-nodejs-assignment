@@ -7,6 +7,7 @@ import { SchedulerScannerService } from './scheduler/scheduler-scanner.service';
 import { TaskExecutorRegistry } from './executors/task-executor.registry';
 import { FileReadExecutor } from './executors/file-read.executor';
 import { FileImportExecutor } from './executors/file-import.executor';
+import { FormFillExecutor } from './executors/form-fill.executor';
 
 @Module({
   controllers: [SchedulesController],
@@ -17,6 +18,7 @@ import { FileImportExecutor } from './executors/file-import.executor';
     SchedulerScannerService,
     FileReadExecutor,
     FileImportExecutor,
+    FormFillExecutor,
     TaskExecutorRegistry,
   ],
 })
