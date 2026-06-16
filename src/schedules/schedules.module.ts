@@ -6,6 +6,7 @@ import { TaskPayloadValidator } from './validators/task-payload.validator';
 import { SchedulerScannerService } from './scheduler/scheduler-scanner.service';
 import { TaskExecutorRegistry } from './executors/task-executor.registry';
 import { FileReadExecutor } from './executors/file-read.executor';
+import { FileImportExecutor } from './executors/file-import.executor';
 
 @Module({
   controllers: [SchedulesController],
@@ -15,6 +16,7 @@ import { FileReadExecutor } from './executors/file-read.executor';
     TaskPayloadValidator,
     SchedulerScannerService,
     FileReadExecutor,
+    FileImportExecutor,
     TaskExecutorRegistry,
   ],
 })
